@@ -39,7 +39,8 @@ const servers = {
 const pc = new RTCPeerConnection(servers);
 let dataChannel = null;
 let localStream = null;
-let remoteStream = null;
+let screenStream = null;
+let remoteStream = new MediaStream();
 let recognition = null;
 let isMuted = false;
 let isVideoOff = false;
@@ -65,6 +66,15 @@ const elements = {
   videoBtn: document.getElementById('videoBtn'),
   captionBtn: document.getElementById('captionBtn'),
   aslBtn: document.getElementById('aslBtn'),
+  shareBtn: document.getElementById('shareBtn'),
+  chatBtn: document.getElementById('chatBtn'),
+  sidePanel: document.getElementById('sidePanel'),
+  chatMessages: document.getElementById('chatMessages'),
+  chatInput: document.getElementById('chatInput'),
+  sendChatBtn: document.getElementById('sendChatBtn'),
+  copyBtn: document.getElementById('copyBtn'),
+  connectionStatus: document.getElementById('connectionStatus'),
+  sttStatus: document.getElementById('sttStatus'),
   signapseContainer: document.getElementById('signapseContainer'),
   avatarPlaceholder: document.querySelector('#avatarPlaceholder p')
 };
@@ -75,37 +85,47 @@ const elements = {
 elements.webcamButton.onclick = async () => {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    remoteStream = new MediaStream();
 
+    // Attach local stream to video element
+    elements.webcamVideo.srcObject = localStream;
+    elements.remoteVideo.srcObject = remoteStream;
+
+    // Add local tracks to peer connection
     localStream.getTracks().forEach((track) => {
       pc.addTrack(track, localStream);
     });
 
+    // Handle remote tracks
     pc.ontrack = (event) => {
       event.streams[0].getTracks().forEach((track) => {
         remoteStream.addTrack(track);
       });
+      console.log("Remote track added and attached.");
+      elements.connectionStatus.innerText = "Connected";
     };
-
-    elements.webcamVideo.srcObject = localStream;
-    elements.remoteVideo.srcObject = remoteStream;
 
     elements.setupInitial.classList.add('hidden');
     elements.setupActions.classList.remove('hidden');
 
-    // Start gesture recognition once video is ready
+    // Check for ID in URL to auto-fill
+    const urlParams = new URLSearchParams(window.location.search);
+    const meetingId = urlParams.get('id');
+    if (meetingId) {
+      elements.callInput.value = meetingId;
+    }
+
     initGestureRecognition();
     initSpeechRecognition();
   } catch (err) {
     console.error("Error accessing media devices:", err);
-    alert("Camera/Mic access is required for this app.");
+    alert("Camera/Mic access is required.");
   }
 };
 
 /** Create Offer */
 elements.callButton.onclick = async () => {
-  // Setup Data Channel for captions and gestures
-  setupDataChannel(pc.createDataChannel('accessibility'));
+  // Create accessibility and chat data channel
+  setupDataChannel(pc.createDataChannel('symphony-data'));
 
   const callDocRef = doc(collection(db, 'calls'));
   const offerCandidates = collection(callDocRef, 'offerCandidates');
@@ -115,6 +135,7 @@ elements.callButton.onclick = async () => {
   elements.displayMeetId.innerText = `ID: ${callId}`;
   elements.activeCallInfo.classList.remove('hidden');
   elements.setupOverlay.classList.add('hidden');
+  elements.connectionStatus.innerText = "Waiting for remote...";
 
   pc.onicecandidate = (event) => {
     event.candidate && addDoc(offerCandidates, event.candidate.toJSON());
@@ -130,6 +151,7 @@ elements.callButton.onclick = async () => {
 
   await setDoc(callDocRef, { offer });
 
+  // Listen for answer
   onSnapshot(callDocRef, (snapshot) => {
     const data = snapshot.data();
     if (!pc.currentRemoteDescription && data?.answer) {
@@ -138,6 +160,7 @@ elements.callButton.onclick = async () => {
     }
   });
 
+  // Add remote candidates
   onSnapshot(answerCandidates, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type === 'added') {
@@ -160,6 +183,7 @@ elements.answerButton.onclick = async () => {
   elements.displayMeetId.innerText = `ID: ${callId}`;
   elements.activeCallInfo.classList.remove('hidden');
   elements.setupOverlay.classList.add('hidden');
+  elements.connectionStatus.innerText = "Joining...";
 
   pc.ondatachannel = (event) => {
     setupDataChannel(event.channel);
@@ -185,6 +209,7 @@ elements.answerButton.onclick = async () => {
 
   await updateDoc(callDocRef, { answer });
 
+  // Add offerer candidates
   onSnapshot(offerCandidates, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type === 'added') {
@@ -194,29 +219,51 @@ elements.answerButton.onclick = async () => {
   });
 };
 
-// --- ACCESSIBILITY LOGIC ---
+// --- DATA CHANNEL & CHAT ---
 
-/** Data Channel Setup */
 function setupDataChannel(channel) {
   dataChannel = channel;
-  dataChannel.onopen = () => console.log("Data Channel Open");
+  dataChannel.onopen = () => {
+    console.log("Data Channel Ready");
+    appendMessage("System", "Chat connected", "remote");
+  };
+
   dataChannel.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    if (data.type === 'caption') {
-      handleIncomingCaption(data.text);
-    } else if (data.type === 'gesture') {
-      handleIncomingGesture(data.gesture);
+    switch (data.type) {
+      case 'caption': handleIncomingCaption(data.text); break;
+      case 'gesture': handleIncomingGesture(data.gesture); break;
+      case 'chat': appendMessage("Remote", data.text, "remote"); break;
     }
   };
 }
 
-/** 1. Speech-to-Text (Hearing -> Deaf) */
+function sendChatMessage() {
+  const text = elements.chatInput.value.trim();
+  if (text && dataChannel?.readyState === 'open') {
+    dataChannel.send(JSON.stringify({ type: 'chat', text }));
+    appendMessage("You", text, "local");
+    elements.chatInput.value = "";
+  }
+}
+
+function appendMessage(sender, text, type) {
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `chat-msg ${type}`;
+  msgDiv.innerHTML = `<strong>${sender}:</strong> ${text}`;
+  elements.chatMessages.appendChild(msgDiv);
+  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+elements.sendChatBtn.onclick = sendChatMessage;
+elements.chatInput.onkeypress = (e) => e.key === 'Enter' && sendChatMessage();
+
+// --- ACCESSIBILITY ACTIONS ---
+
+/** 1. Speech-to-Text */
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    console.warn("Speech Recognition not supported");
-    return;
-  }
+  if (!SpeechRecognition) return;
 
   recognition = new SpeechRecognition();
   recognition.continuous = true;
@@ -224,41 +271,31 @@ function initSpeechRecognition() {
   recognition.lang = 'en-US';
 
   recognition.onresult = (event) => {
-    let interimTranscript = '';
-    let finalTranscript = '';
-
+    let transcript = '';
     for (let i = event.resultIndex; i < event.results.length; ++i) {
-      if (event.results[i].isFinal) {
-        finalTranscript += event.results[i][0].transcript;
-      } else {
-        interimTranscript += event.results[i][0].transcript;
-      }
+      transcript += event.results[i][0].transcript;
     }
-
-    const currentText = finalTranscript || interimTranscript;
-    if (currentText) {
-      if (dataChannel && dataChannel.readyState === 'open') {
-        dataChannel.send(JSON.stringify({ type: 'caption', text: currentText }));
-      }
+    if (dataChannel?.readyState === 'open') {
+      dataChannel.send(JSON.stringify({ type: 'caption', text: transcript }));
     }
   };
 
-  recognition.onerror = (err) => console.error("Speech Recognition Error:", err);
   recognition.start();
+  elements.sttStatus.classList.remove('hidden');
 }
 
-/** 2. Handle Incoming Captions (Deaf User's View) */
 function handleIncomingCaption(text) {
   elements.captionOverlay.innerText = text;
+  elements.captionOverlay.classList.remove('hidden');
   elements.avatarPlaceholder.innerText = "Signing: " + text.substring(0, 30) + "...";
 
   clearTimeout(elements.captionOverlay.timeout);
   elements.captionOverlay.timeout = setTimeout(() => {
-    elements.captionOverlay.innerText = "";
-  }, 5000);
+    elements.captionOverlay.classList.add('hidden');
+  }, 4000);
 }
 
-/** 3. Gesture Recognition (Deaf -> Hearing) */
+/** 2. Hand Gestures */
 async function initGestureRecognition() {
   const resizeCanvas = () => {
     elements.gestureCanvas.width = elements.webcamVideo.videoWidth || 640;
@@ -290,13 +327,9 @@ async function initGestureRecognition() {
 }
 
 function onHandResults(results) {
-  const canvasCtx = elements.gestureCanvas.getContext('2d');
-  canvasCtx.clearRect(0, 0, elements.gestureCanvas.width, elements.gestureCanvas.height);
-
   if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
     const landmarks = results.multiHandLandmarks[0];
     const gesture = detectSimpleGesture(landmarks);
-
     if (gesture && gesture !== lastGesture) {
       handleLocalGesture(gesture);
     }
@@ -314,23 +347,22 @@ function detectSimpleGesture(landmarks) {
   if (isThumbUp && !isOpenPalm) return "YES";
   if (isThumbDown) return "NO";
   if (isOpenPalm && landmarks[8].y < landmarks[4].y) return "HELLO";
-
   return null;
 }
 
 function handleLocalGesture(gesture) {
   if (gestureCooldown) return;
-
   lastGesture = gesture;
   gestureCooldown = true;
 
   elements.gestureToast.innerText = `${gesture} 👋`;
   elements.gestureToast.style.opacity = 1;
 
-  speakText(gesture);
+  const utterance = new SpeechSynthesisUtterance(gesture);
+  window.speechSynthesis.speak(utterance);
 
-  if (dataChannel && dataChannel.readyState === 'open') {
-    dataChannel.send(JSON.stringify({ type: 'gesture', gesture: gesture }));
+  if (dataChannel?.readyState === 'open') {
+    dataChannel.send(JSON.stringify({ type: 'gesture', gesture }));
   }
 
   setTimeout(() => {
@@ -343,16 +375,12 @@ function handleLocalGesture(gesture) {
 function handleIncomingGesture(gesture) {
   elements.gestureToast.innerText = `Remote: ${gesture}`;
   elements.gestureToast.style.opacity = 1;
-  speakText(gesture);
+  const utterance = new SpeechSynthesisUtterance("Remote user says " + gesture);
+  window.speechSynthesis.speak(utterance);
   setTimeout(() => elements.gestureToast.style.opacity = 0, 3000);
 }
 
-function speakText(text) {
-  const utterance = new SpeechSynthesisUtterance(text);
-  window.speechSynthesis.speak(utterance);
-}
-
-// --- CONTROLS ---
+// --- CALL CONTROLS ---
 
 elements.muteBtn.onclick = () => {
   isMuted = !isMuted;
@@ -367,19 +395,46 @@ elements.videoBtn.onclick = () => {
   localStream.getVideoTracks()[0].enabled = !isVideoOff;
   elements.videoBtn.classList.toggle('active', isVideoOff);
   elements.videoBtn.querySelector('.icon').innerText = isVideoOff ? '📹 Off' : '📹';
-  elements.videoBtn.querySelector('.btn-label').innerText = isVideoOff ? 'Start Video' : 'Stop Video';
 };
 
-elements.captionBtn.onclick = () => {
-  const active = elements.captionBtn.classList.toggle('active');
-  elements.captionOverlay.style.display = active ? 'flex' : 'none';
+elements.shareBtn.onclick = async () => {
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const screenTrack = screenStream.getVideoTracks()[0];
+    const sender = pc.getSenders().find(s => s.track.kind === 'video');
+    sender.replaceTrack(screenTrack);
+
+    screenTrack.onended = () => {
+      sender.replaceTrack(localStream.getVideoTracks()[0]);
+    };
+  } catch (err) {
+    console.error("Screen share failed:", err);
+  }
 };
 
-elements.aslBtn.onclick = () => {
-  const active = elements.aslBtn.classList.toggle('active');
-  elements.signapseContainer.style.display = active ? 'flex' : 'none';
+elements.chatBtn.onclick = () => {
+  elements.sidePanel.classList.toggle('hidden');
+  elements.chatBtn.classList.toggle('active');
+};
+
+elements.copyBtn.onclick = () => {
+  const url = `${window.location.origin}${window.location.pathname}?id=${elements.displayMeetId.innerText.split(': ')[1]}`;
+  navigator.clipboard.writeText(url).then(() => {
+    alert("Meeting link copied to clipboard!");
+  });
 };
 
 elements.hangupButton.onclick = () => {
-  location.reload();
+  location.href = window.location.origin + window.location.pathname;
+};
+
+// Toggle features
+elements.captionBtn.onclick = () => {
+  elements.captionOverlay.classList.toggle('hidden');
+  elements.captionBtn.classList.toggle('active');
+};
+
+elements.aslBtn.onclick = () => {
+  elements.signapseContainer.classList.toggle('hidden');
+  elements.aslBtn.classList.toggle('active');
 };

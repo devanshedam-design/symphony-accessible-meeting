@@ -13,94 +13,127 @@
 </head>
 
 <body>
+  <!-- Setup / Auth Screen -->
   <div id="setupOverlay">
     <div class="setup-card">
       <h1>Symphony</h1>
-      <p style="color: var(--text-dim); margin-bottom: 20px;">Accessible 1-to-1 Video Chat</p>
+      <p style="color: var(--text-dim);">Accessible HD Video Meetings</p>
 
       <div id="setupInitial">
-        <button id="webcamButton" class="primary-btn">Enable Camera & Mic</button>
+        <button id="webcamButton" class="primary-btn" style="margin-top: 30px;">Enable Permissions</button>
       </div>
 
       <div id="setupActions" class="hidden">
         <div class="input-group">
-          <label>Join Meeting</label>
-          <input type="text" id="callInput" placeholder="Enter Meeting ID">
-          <button id="answerButton" class="primary-btn">Join Call</button>
+          <label>Join a Session</label>
+          <input type="text" id="callInput" placeholder="Meeting ID (from URL or host)">
+          <button id="answerButton" class="primary-btn">Join Link</button>
         </div>
-        <div style="margin: 20px 0; color: var(--text-dim);">OR</div>
-        <button id="callButton" class="secondary-btn">Create New Meeting</button>
+        <div style="margin: 20px 0; color: var(--text-dim); font-size: 12px;">OR</div>
+        <button id="callButton" class="secondary-btn">Start New Meeting</button>
       </div>
     </div>
   </div>
 
+  <!-- App Header -->
   <header>
     <div class="meeting-info">
-      <span style="font-weight: bold; font-size: 18px;">Symphony</span>
+      <span style="font-weight: bold; font-size: 18px; color: var(--primary);">Symphony</span>
       <div id="activeCallInfo" class="hidden">
-        <span class="meeting-id" id="displayMeetId">ID: ---</span>
-      </div>
-    </div>
-    <div class="status-indicators">
-      <span id="sttStatus" style="font-size: 12px; color: var(--accent);">STT Active</span>
-    </div>
-  </header>
-
-  <main>
-    <!-- Remote Video (Large) -->
-    <video id="remoteVideo" autoplay playsinline></video>
-
-    <!-- Live Captions Overlay -->
-    <div id="captionOverlay">Waiting for speech...</div>
-
-    <!-- Gesture Recognition Toast -->
-    <div id="gestureToast">HELLO 👋</div>
-
-    <!-- Signapse ASL Avatar -->
-    <div id="signapseContainer">
-      <div class="avatar-label">ASL Avatar (Signapse)</div>
-      <div id="signapseView">
-        <!-- In a real app, this would be the Signapse Player -->
-        <div id="avatarPlaceholder" style="text-align: center; padding: 10px;">
-          <div style="font-size: 40px;">👤</div>
-          <p>Ready to sign...</p>
+        <div class="meeting-id-container">
+          <span class="meeting-id" id="displayMeetId">ID: ---</span>
+          <button class="copy-btn" id="copyBtn">Copy Link</button>
         </div>
       </div>
     </div>
-
-    <!-- Local Video (Pip) -->
-    <div id="localVideoContainer">
-      <video id="webcamVideo" autoplay playsinline muted></video>
-      <canvas id="gestureCanvas"></canvas>
+    <div class="status-indicators">
+      <span id="connectionStatus" style="font-size: 12px; color: var(--text-dim);">Connecting...</span>
+      <span id="sttStatus" style="font-size: 12px; color: var(--accent); margin-left:15px;" class="hidden">● Live
+        Captions</span>
     </div>
-  </main>
+  </header>
 
+  <!-- Main Viewport -->
+  <div id="mainWrapper">
+    <main>
+      <!-- Remote Participant Video -->
+      <video id="remoteVideo" autoplay playsinline></video>
+
+      <!-- Live Captions (Deaf Accessibility) -->
+      <div id="captionOverlay" class="hidden">Waiting for speech...</div>
+
+      <!-- Hand Gestures (Mute/Hearing Indicator) -->
+      <div id="gestureToast">HELLO 👋</div>
+
+      <!-- Signapse ASL Avatar viewport -->
+      <div id="signapseContainer" class="hidden">
+        <div class="avatar-label">ASL Avatar</div>
+        <div id="signapseView">
+          <div id="avatarPlaceholder" style="text-align: center; padding: 10px;">
+            <div style="font-size: 40px; margin-top: 20px;">👤</div>
+            <p style="font-size: 11px; margin-top: 10px;">Signapse AI Ready</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Local Participant / PIP -->
+      <div id="localVideoContainer">
+        <video id="webcamVideo" autoplay playsinline muted></video>
+        <canvas id="gestureCanvas"></canvas>
+      </div>
+    </main>
+
+    <!-- Chat Sidebar -->
+    <div id="sidePanel" class="hidden">
+      <div class="panel-header">Session Chat</div>
+      <div id="chatMessages">
+        <!-- Messages go here -->
+        <div class="chat-msg remote" style="font-size: 11px; font-style: italic;">Welcome to Symphony! Sharing your
+          camera and audio enables accessible features.</div>
+      </div>
+      <div class="chat-input-area">
+        <input type="text" id="chatInput" placeholder="Type a message...">
+        <button id="sendChatBtn" style="background: none; border: none; font-size: 20px; cursor: pointer;">📩</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Call Controls -->
   <div class="control-bar">
-    <button class="control-btn" id="muteBtn" title="Mute/Unmute">
+    <button class="control-btn" id="muteBtn" title="Mute Mic">
       <span class="icon">🎤</span>
       <span class="btn-label">Mute</span>
     </button>
-    <button class="control-btn" id="videoBtn" title="Start/Stop Video">
+    <button class="control-btn" id="videoBtn" title="Stop Video">
       <span class="icon">📹</span>
       <span class="btn-label">Stop Video</span>
     </button>
+    <button class="control-btn" id="shareBtn" title="Share Screen">
+      <span class="icon">📺</span>
+      <span class="btn-label">Share</span>
+    </button>
 
-    <div style="width: 40px;"></div>
+    <div style="width: 30px; border-right: 1px solid #333; height: 30px;"></div>
 
-    <button class="control-btn active" id="captionBtn" title="Toggle Captions">
+    <button class="control-btn active" id="captionBtn" title="Accessible Captions">
       <span class="icon">CC</span>
       <span class="btn-label">Captions</span>
     </button>
 
-    <button class="control-btn active" id="aslBtn" title="Toggle ASL Avatar">
+    <button class="control-btn" id="aslBtn" title="ASL Interpreter">
       <span class="icon">🤟</span>
       <span class="btn-label">ASL Avatar</span>
     </button>
 
-    <div style="width: 40px;"></div>
+    <button class="control-btn" id="chatBtn" title="Toggle Chat">
+      <span class="icon">💬</span>
+      <span class="btn-label">Chat</span>
+    </button>
 
-    <button class="control-btn danger" id="hangupButton" title="Leave Meeting">
-      <span class="icon" style="font-size: 24px;">📞</span>
+    <div style="width: 30px; border-right: 1px solid #333; height: 30px;"></div>
+
+    <button class="control-btn danger" id="hangupButton" title="Leave">
+      <span class="icon" style="font-size: 22px;">☏</span>
       <span class="btn-label">End</span>
     </button>
   </div>
