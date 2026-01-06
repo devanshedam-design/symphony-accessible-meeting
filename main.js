@@ -8,8 +8,17 @@ import {
   setDoc,
   updateDoc,
   getDoc,
+  updateDoc,
+  getDoc,
   onSnapshot
 } from 'firebase/firestore';
+import {
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signOut
+} from 'firebase/auth';
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -25,6 +34,8 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
 
 const servers = {
   iceServers: [
@@ -47,6 +58,9 @@ let isVideoOff = false;
 
 // HTML Elements
 const elements = {
+  loginSection: document.getElementById('loginSection'),
+  loginBtn: document.getElementById('loginBtn'),
+  userDisplayName: document.getElementById('userDisplayName'),
   webcamButton: document.getElementById('webcamButton'),
   webcamVideo: document.getElementById('webcamVideo'),
   callButton: document.getElementById('callButton'),
@@ -77,6 +91,30 @@ const elements = {
   sttStatus: document.getElementById('sttStatus'),
   signapseContainer: document.getElementById('signapseContainer'),
   avatarPlaceholder: document.querySelector('#avatarPlaceholder p')
+};
+
+// --- AUTH LOGIC ---
+
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    elements.loginSection.classList.add('hidden');
+    elements.setupInitial.classList.remove('hidden');
+    elements.userDisplayName.innerText = `Welcome, ${user.displayName}`;
+    console.log("Logged in as:", user.email);
+  } else {
+    elements.loginSection.classList.remove('hidden');
+    elements.setupInitial.classList.add('hidden');
+    elements.setupActions.classList.add('hidden');
+  }
+});
+
+elements.loginBtn.onclick = async () => {
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    console.error("Login failed:", error);
+    alert("Authentication failed. Please check your Firebase console for Google Auth settings.");
+  }
 };
 
 // --- WEBRTC CORE ---
