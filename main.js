@@ -97,11 +97,12 @@ elements.webcamButton.onclick = async () => {
 
     // Handle remote tracks
     pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        remoteStream.addTrack(track);
-      });
-      console.log("Remote track added and attached.");
+      console.log("Remote stream received:", event.streams[0]);
+      if (elements.remoteVideo.srcObject !== event.streams[0]) {
+        elements.remoteVideo.srcObject = event.streams[0];
+      }
       elements.connectionStatus.innerText = "Connected";
+      elements.connectionStatus.style.color = "var(--accent)";
     };
 
     elements.setupInitial.classList.add('hidden');
@@ -163,9 +164,9 @@ elements.callButton.onclick = async () => {
   // Add remote candidates
   onSnapshot(answerCandidates, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      if (change.type === 'added') {
+      if (change.type === 'added' && pc.remoteDescription) {
         const candidate = new RTCIceCandidate(change.doc.data());
-        pc.addIceCandidate(candidate);
+        pc.addIceCandidate(candidate).catch(e => console.error("Error adding answer candidate", e));
       }
     });
   });
@@ -212,8 +213,8 @@ elements.answerButton.onclick = async () => {
   // Add offerer candidates
   onSnapshot(offerCandidates, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      if (change.type === 'added') {
-        pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+      if (change.type === 'added' && pc.remoteDescription) {
+        pc.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(e => console.error("Error adding offer candidate", e));
       }
     });
   });
@@ -339,7 +340,40 @@ function onHandResults(results) {
 let lastGesture = null;
 let gestureCooldown = false;
 
+const ASL_ALPHABET = {
+  A: (lm) => isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && lm[4].y < lm[3].y,
+  B: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && !isFolded(lm, 16) && !isFolded(lm, 20) && lm[4].x > lm[3].x, // Simplified
+  C: (lm) => !isFolded(lm, 8) && lm[8].y < lm[5].y && Math.abs(lm[4].x - lm[20].x) > 0.1, // Curved palm
+  D: (lm) => !isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20),
+  E: (lm) => isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && lm[8].y > lm[7].y,
+  F: (lm) => isFolded(lm, 8) && !isFolded(lm, 12) && !isFolded(lm, 16) && !isFolded(lm, 20) && dist(lm[4], lm[8]) < 0.05,
+  G: (lm) => !isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && lm[8].x < lm[5].x,
+  H: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && Math.abs(lm[8].y - lm[12].y) < 0.05,
+  I: (lm) => isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && !isFolded(lm, 20),
+  K: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && dist(lm[4], lm[10]) < 0.05,
+  L: (lm) => !isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && lm[4].x < lm[3].x,
+  O: (lm) => isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && dist(lm[4], lm[8]) < 0.1,
+  R: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && lm[12].x < lm[8].x, // Crossed
+  U: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && dist(lm[8], lm[12]) < 0.05,
+  V: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && isFolded(lm, 16) && isFolded(lm, 20) && dist(lm[8], lm[12]) > 0.1,
+  W: (lm) => !isFolded(lm, 8) && !isFolded(lm, 12) && !isFolded(lm, 16) && isFolded(lm, 20),
+  Y: (lm) => isFolded(lm, 8) && isFolded(lm, 12) && isFolded(lm, 16) && !isFolded(lm, 20) && lm[4].x < lm[3].x,
+};
+
+function isFolded(lm, tipIndex) {
+  return lm[tipIndex].y > lm[tipIndex - 2].y;
+}
+
+function dist(p1, p2) {
+  return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+}
+
 function detectSimpleGesture(landmarks) {
+  for (const [letter, check] of Object.entries(ASL_ALPHABET)) {
+    if (check(landmarks)) return letter;
+  }
+
+  // Keep original simple ones as fallback
   const isThumbUp = landmarks[4].y < landmarks[3].y && landmarks[4].y < landmarks[2].y;
   const isThumbDown = landmarks[4].y > landmarks[3].y && landmarks[4].y > landmarks[2].y;
   const isOpenPalm = landmarks[8].y < landmarks[6].y && landmarks[12].y < landmarks[10].y && landmarks[16].y < landmarks[14].y;
@@ -347,6 +381,7 @@ function detectSimpleGesture(landmarks) {
   if (isThumbUp && !isOpenPalm) return "YES";
   if (isThumbDown) return "NO";
   if (isOpenPalm && landmarks[8].y < landmarks[4].y) return "HELLO";
+
   return null;
 }
 
