@@ -30,7 +30,6 @@ const firebaseConfig = {
   measurementId: "G-LFYVC5N6G2"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
@@ -52,8 +51,10 @@ let recognition = null;
 let isMuted = false;
 let isVideoOff = false;
 let isCaptionsOn = false;
+let unsubCall = null;
+let unsubOffer = null;
+let unsubAnswer = null;
 
-// HTML Elements
 const elements = {
   loginSection: document.getElementById('loginSection'),
   loginBtn: document.getElementById('loginBtn'),
@@ -68,12 +69,9 @@ const elements = {
   setupInitial: document.getElementById('setupInitial'),
   displayMeetId: document.getElementById('displayMeetId'),
   captionOverlay: document.getElementById('captionOverlay'),
-  gestureCanvas: document.getElementById('gestureCanvas'),
-  gestureToast: document.getElementById('gestureToast'),
   muteBtn: document.getElementById('muteBtn'),
   videoBtn: document.getElementById('videoBtn'),
   captionBtn: document.getElementById('captionBtn'),
-  aslBtn: document.getElementById('aslBtn'),
   shareBtn: document.getElementById('shareBtn'),
   chatBtn: document.getElementById('chatBtn'),
   sidePanel: document.getElementById('sidePanel'),
@@ -84,7 +82,8 @@ const elements = {
   mainWrapper: document.getElementById('mainWrapper'),
   bottomBar: document.getElementById('bottomBar'),
   meetTime: document.getElementById('meetTime'),
-  closePanelBtn: document.getElementById('closePanelBtn')
+  closePanelBtn: document.getElementById('closePanelBtn'),
+  gestureToast: document.getElementById('gestureToast')
 };
 
 // --- AUTH LOGIC ---
@@ -93,6 +92,11 @@ onAuthStateChanged(auth, (user) => {
     elements.loginSection.classList.add('hidden');
     elements.setupInitial.classList.remove('hidden');
     elements.userDisplayName.innerText = `Logged in as ${user.displayName}`;
+
+    // Auto-fill ID from URL if present
+    const urlParams = new URLSearchParams(window.location.search);
+    const meetingId = urlParams.get('id');
+    if (meetingId) elements.callInput.value = meetingId;
   } else {
     elements.loginSection.classList.remove('hidden');
     elements.setupInitial.classList.add('hidden');
@@ -104,8 +108,7 @@ elements.loginBtn.onclick = async () => {
     await setPersistence(auth, browserLocalPersistence);
     await signInWithPopup(auth, provider);
   } catch (error) {
-    console.error("Login Error:", error);
-    alert(`Auth Failure: ${error.message}`);
+    console.error("Auth Error:", error);
   }
 };
 
@@ -117,23 +120,27 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock();
 
-// --- WEBRTC CORE ---
+// --- WEBRTC LOGIC ---
 elements.remoteVideo.srcObject = remoteStream;
 
 pc.ontrack = (event) => {
+  console.log("Remote track received");
   event.streams[0].getTracks().forEach((track) => {
     remoteStream.addTrack(track);
   });
 };
 
-/** Shared Start Session Logic */
-async function startSession() {
+pc.oniceconnectionstatechange = () => {
+  console.log("ICE Connection State:", pc.iceConnectionState);
+  if (pc.iceConnectionState === 'disconnected') {
+    appendMessage("System", "Partner disconnected.", false);
+  }
+};
+
+async function startMedia() {
   localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   elements.webcamVideo.srcObject = localStream;
-
-  localStream.getTracks().forEach((track) => {
-    pc.addTrack(track, localStream);
-  });
+  localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
 
   elements.setupOverlay.classList.add('fade-out');
   setTimeout(() => {
@@ -145,17 +152,17 @@ async function startSession() {
   initSpeechRecognition();
 }
 
-/** Host: Create Meeting */
+/** Host Logic */
 elements.webcamButton.onclick = async () => {
   try {
-    await startSession();
+    await startMedia();
     setupDataChannel(pc.createDataChannel('symphony-data'));
 
     const callDocRef = doc(collection(db, 'calls'));
     const offerCandidates = collection(callDocRef, 'offerCandidates');
     const answerCandidates = collection(callDocRef, 'answerCandidates');
 
-    elements.displayMeetId.innerText = `CODE: ${callDocRef.id}`;
+    elements.displayMeetId.innerText = callDocRef.id;
 
     pc.onicecandidate = (event) => {
       event.candidate && addDoc(offerCandidates, event.candidate.toJSON());
@@ -163,40 +170,36 @@ elements.webcamButton.onclick = async () => {
 
     const offerDescription = await pc.createOffer();
     await pc.setLocalDescription(offerDescription);
+    await setDoc(callDocRef, { offer: { sdp: offerDescription.sdp, type: offerDescription.type } });
 
-    const offer = { sdp: offerDescription.sdp, type: offerDescription.type };
-    await setDoc(callDocRef, { offer });
-
-    // Answer listener
-    onSnapshot(callDocRef, (snapshot) => {
+    unsubCall = onSnapshot(callDocRef, (snapshot) => {
       const data = snapshot.data();
       if (!pc.currentRemoteDescription && data?.answer) {
         pc.setRemoteDescription(new RTCSessionDescription(data.answer));
       }
     });
 
-    onSnapshot(answerCandidates, (snapshot) => {
+    unsubAnswer = onSnapshot(answerCandidates, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added' && pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(e => console.error(e));
+          pc.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(console.error);
         }
       });
     });
 
   } catch (err) {
-    console.error(err);
-    alert("Camera/Mic access is required.");
+    console.error("Host Error:", err);
   }
 };
 
-/** Guest: Join Session */
+/** Join Logic */
 elements.answerButton.onclick = async () => {
   const callId = elements.callInput.value.trim();
-  if (!callId) return alert("Please enter a meeting code");
+  if (!callId) return alert("Enter code");
 
   try {
-    await startSession();
-    elements.displayMeetId.innerText = `CODE: ${callId}`;
+    await startMedia();
+    elements.displayMeetId.innerText = callId;
 
     const callDocRef = doc(db, 'calls', callId);
     const answerCandidates = collection(callDocRef, 'answerCandidates');
@@ -208,39 +211,35 @@ elements.answerButton.onclick = async () => {
     };
 
     const callData = (await getDoc(callDocRef)).data();
-    if (!callData) return alert("Symphony Session not found.");
+    if (!callData) throw new Error("Meeting not found");
 
     await pc.setRemoteDescription(new RTCSessionDescription(callData.offer));
     const answerDescription = await pc.createAnswer();
     await pc.setLocalDescription(answerDescription);
-
     await updateDoc(callDocRef, { answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
 
-    onSnapshot(offerCandidates, (snapshot) => {
+    unsubOffer = onSnapshot(offerCandidates, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added' && pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(e => console.error(e));
+          pc.addIceCandidate(new RTCIceCandidate(change.doc.data())).catch(console.error);
         }
       });
     });
 
   } catch (err) {
-    console.error(err);
-    alert("Could not join session.");
+    console.error("Join Error:", err);
+    alert(err.message);
   }
 };
 
-// --- DATA CHANNEL & MESSAGING ---
+// --- MESSAGING ---
 function setupDataChannel(channel) {
   dataChannel = channel;
-  dataChannel.onopen = () => appendMessage("System", "Secure stream established", false);
-
+  dataChannel.onopen = () => appendMessage("System", "Encryption active. Secure channel ready.", false);
   dataChannel.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    switch (data.type) {
-      case 'caption': handleIncomingCaption(data.text); break;
-      case 'chat': appendMessage("Partner", data.text, false); break;
-    }
+    if (data.type === 'caption') handleIncomingCaption(data.text);
+    if (data.type === 'chat') appendMessage("Partner", data.text, false);
   };
 }
 
@@ -264,7 +263,7 @@ function appendMessage(sender, text, isLocal) {
 elements.sendChatBtn.onclick = sendChatMessage;
 elements.chatInput.onkeypress = (e) => e.key === 'Enter' && sendChatMessage();
 
-// --- ACCESSIBILITY / SPEECH ---
+// --- CAPTIONS ---
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) return;
@@ -272,29 +271,23 @@ function initSpeechRecognition() {
   recognition = new SpeechRecognition();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.lang = 'en-US';
 
-  recognition.onresult = (event) => {
+  recognition.onresult = (e) => {
     let transcript = '';
-    for (let i = event.resultIndex; i < event.results.length; ++i) {
-      transcript += event.results[i][0].transcript;
-    }
-    if (dataChannel?.readyState === 'open') {
-      dataChannel.send(JSON.stringify({ type: 'caption', text: transcript }));
-    }
+    for (let i = e.resultIndex; i < e.results.length; ++i) transcript += e.results[i][0].transcript;
+    if (dataChannel?.readyState === 'open') dataChannel.send(JSON.stringify({ type: 'caption', text: transcript }));
   };
+  recognition.onerror = () => recognition.start(); // Auto-restart on silence/timeout
   recognition.start();
 }
 
 function handleIncomingCaption(text) {
   if (!isCaptionsOn) return;
   elements.captionOverlay.innerText = text;
-  elements.captionOverlay.classList.remove('hidden');
-  clearTimeout(elements.captionOverlay.timeout);
-  elements.captionOverlay.timeout = setTimeout(() => { elements.captionOverlay.classList.add('hidden'); }, 3000);
+  elements.captionOverlay.classList.toggle('hidden', !text);
 }
 
-// --- INTERFACE CONTROLS ---
+// --- CONTROLS ---
 elements.muteBtn.onclick = () => {
   isMuted = !isMuted;
   localStream.getAudioTracks()[0].enabled = !isMuted;
@@ -312,24 +305,31 @@ elements.videoBtn.onclick = () => {
 elements.captionBtn.onclick = () => {
   isCaptionsOn = !isCaptionsOn;
   elements.captionBtn.classList.toggle('active', isCaptionsOn);
+  elements.captionOverlay.classList.toggle('hidden', !isCaptionsOn);
 };
 
 elements.shareBtn.onclick = async () => {
   try {
     const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const screenTrack = screenStream.getVideoTracks()[0];
     const sender = pc.getSenders().find(s => s.track.kind === 'video');
-    sender.replaceTrack(screenStream.getVideoTracks()[0]);
-    screenStream.getVideoTracks()[0].onended = () => sender.replaceTrack(localStream.getVideoTracks()[0]);
-  } catch (err) { console.error(err); }
+    sender.replaceTrack(screenTrack);
+    screenTrack.onended = () => sender.replaceTrack(localStream.getVideoTracks()[0]);
+  } catch (err) { console.error("Screen Share Failed:", err); }
 };
 
 elements.chatBtn.onclick = () => elements.sidePanel.classList.toggle('hidden');
 elements.closePanelBtn.onclick = () => elements.sidePanel.classList.add('hidden');
 
 elements.copyBtn.onclick = () => {
-  const code = elements.displayMeetId.innerText.replace('CODE: ', '');
-  const url = `${window.location.origin}/?id=${code}`;
-  navigator.clipboard.writeText(url).then(() => alert("Meeting Link Copied!"));
+  const url = `${window.location.origin}/?id=${elements.displayMeetId.innerText}`;
+  navigator.clipboard.writeText(url).then(() => alert("Meeting URL Copied!"));
 };
 
-elements.hangupButton.onclick = () => location.reload();
+elements.hangupButton.onclick = () => {
+  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  if (unsubCall) unsubCall();
+  if (unsubOffer) unsubOffer();
+  if (unsubAnswer) unsubAnswer();
+  location.reload();
+};
