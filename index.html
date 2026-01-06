@@ -1,41 +1,111 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC Demo</title>
-  </head>
-  <body>
-    <h2>1. Start your Webcam</h2>
-    <div class="videos">
-      <span>
-        <h3>Local Stream</h3>
-        <video id="webcamVideo" autoplay playsinline></video>
-      </span>
-      <span>
-        <h3>Remote Stream</h3>
-        <video id="remoteVideo" autoplay playsinline></video>
-      </span>
 
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Symphony - Accessible Video Conferencing</title>
+  <link rel="stylesheet" href="./style.css">
+  <!-- MediaPipe dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+</head>
 
+<body>
+  <div id="setupOverlay">
+    <div class="setup-card">
+      <h1>Symphony</h1>
+      <p style="color: var(--text-dim); margin-bottom: 20px;">Accessible 1-to-1 Video Chat</p>
+
+      <div id="setupInitial">
+        <button id="webcamButton" class="primary-btn">Enable Camera & Mic</button>
+      </div>
+
+      <div id="setupActions" class="hidden">
+        <div class="input-group">
+          <label>Join Meeting</label>
+          <input type="text" id="callInput" placeholder="Enter Meeting ID">
+          <button id="answerButton" class="primary-btn">Join Call</button>
+        </div>
+        <div style="margin: 20px 0; color: var(--text-dim);">OR</div>
+        <button id="callButton" class="secondary-btn">Create New Meeting</button>
+      </div>
+    </div>
+  </div>
+
+  <header>
+    <div class="meeting-info">
+      <span style="font-weight: bold; font-size: 18px;">Symphony</span>
+      <div id="activeCallInfo" class="hidden">
+        <span class="meeting-id" id="displayMeetId">ID: ---</span>
+      </div>
+    </div>
+    <div class="status-indicators">
+      <span id="sttStatus" style="font-size: 12px; color: var(--accent);">STT Active</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Remote Video (Large) -->
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <!-- Live Captions Overlay -->
+    <div id="captionOverlay">Waiting for speech...</div>
+
+    <!-- Gesture Recognition Toast -->
+    <div id="gestureToast">HELLO 👋</div>
+
+    <!-- Signapse ASL Avatar -->
+    <div id="signapseContainer">
+      <div class="avatar-label">ASL Avatar (Signapse)</div>
+      <div id="signapseView">
+        <!-- In a real app, this would be the Signapse Player -->
+        <div id="avatarPlaceholder" style="text-align: center; padding: 10px;">
+          <div style="font-size: 40px;">👤</div>
+          <p>Ready to sign...</p>
+        </div>
+      </div>
     </div>
 
-    <button id="webcamButton">Start webcam</button>
-    <h2>2. Create a new Call</h2>
-    <button id="callButton" disabled>Create Call (offer)</button>
+    <!-- Local Video (Pip) -->
+    <div id="localVideoContainer">
+      <video id="webcamVideo" autoplay playsinline muted></video>
+      <canvas id="gestureCanvas"></canvas>
+    </div>
+  </main>
 
-    <h2>3. Join a Call</h2>
-    <p>Answer the call from a different browser window or device</p>
-    
-    <input id="callInput" />
-    <button id="answerButton" disabled>Answer</button>
+  <div class="control-bar">
+    <button class="control-btn" id="muteBtn" title="Mute/Unmute">
+      <span class="icon">🎤</span>
+      <span class="btn-label">Mute</span>
+    </button>
+    <button class="control-btn" id="videoBtn" title="Start/Stop Video">
+      <span class="icon">📹</span>
+      <span class="btn-label">Stop Video</span>
+    </button>
 
-    <h2>4. Hangup</h2>
+    <div style="width: 40px;"></div>
 
-    <button id="hangupButton" disabled>Hangup</button>
+    <button class="control-btn active" id="captionBtn" title="Toggle Captions">
+      <span class="icon">CC</span>
+      <span class="btn-label">Captions</span>
+    </button>
 
-    <script type="module" src="/main.js"></script>
+    <button class="control-btn active" id="aslBtn" title="Toggle ASL Avatar">
+      <span class="icon">🤟</span>
+      <span class="btn-label">ASL Avatar</span>
+    </button>
 
-  </body>
+    <div style="width: 40px;"></div>
+
+    <button class="control-btn danger" id="hangupButton" title="Leave Meeting">
+      <span class="icon" style="font-size: 24px;">📞</span>
+      <span class="btn-label">End</span>
+    </button>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+
 </html>
